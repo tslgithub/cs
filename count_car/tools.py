@@ -1,3 +1,5 @@
+#coding:utf-8
+
 from PIL import Image, ImageFont, ImageDraw
 import cv2
 import os
@@ -5,6 +7,9 @@ import time
 import time
 import numpy as np
 import operator
+import PIL
+# from PIL import Image
+# from PIL import ImageDraw
 
 def sh(img):
     Image.show(img)
@@ -24,11 +29,31 @@ def save_img(img):
     check_dir('./tmp')
     cv2.imwrite('./tmp/'+img_name,img)
 
-def pil_save(img):
-    Time = time.asctime(time.localtime(time.time())).split(':')[2].split(' ')[0]
-    Name = os.path.splitext(img)[0]
-    img_name = Time + Name
-    img.save('./tmp/'+img_name+'.jpg', 'jpeg')
+# def pil_save(img):
+#     Time = time.asctime(time.localtime(time.time())).split(':')[2].split(' ')[0]
+#     Name = os.path.splitext(img)[0]
+#     img_name = Time + Name
+#     img.save('./tmp/'+img_name+'.jpg', 'jpeg')
+#
+# def create_lines(x1,y1,x2,y2,image):
+#     '''绘制干扰线'''
+#
+#         # 起始点
+#     begin = (x1,y1)
+#     #结束点
+#     end = (x2,y2)
+#     ImageDraw.draw.line([begin, end], fill=(255, 0, 0))
+#     # fill = ()
+
+# def create_points():
+#     '''绘制干扰点'''
+#     chance = min(100, max(0, int(point_chance))) # 大小限制在[0, 100]
+#
+#     for w in xrange(width):
+#         for h in xrange(height):
+#             tmp = random.randint(0, 100)
+#             if tmp > 100 - chance:
+#                 draw.point((w, h), fill=(0, 0, 0))
 
 def region_nms(out_classes,out_boxes,out_scores,image,clock):
     w,h = image.size[::-1]
@@ -155,6 +180,7 @@ def region_nms(out_classes,out_boxes,out_scores,image,clock):
     print('class------------------ ',new_out_classes)
     print('out_scores------------- ',new_out_scores)
     print('out_boxes-------------- ',new_out_boxes)
+    print('clock ------------------',clock)
     return np.array(new_out_classes),np.array(new_out_scores),np.array(new_out_boxes)
     # return np.array(out_classes),np.array(out_scores),np.array(out_boxes)
 
@@ -163,29 +189,48 @@ def track_target(out_classes, out_scores, out_boxes,image,last2boxes):
     print('out_scores = ',out_scores.tolist())
     print('out_boxes = ',out_boxes.tolist())
     print('***************************************out_classes = ',out_classes.tolist())
-    return
+    # return
 
     if len(last2boxes)==1:
         return out_classes, out_scores, out_boxes
     # last2boxes
     delta = 0.3
-    image = np.asarray(image)
-    gray = cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
-    w,h = gray.shape[::-1]
-    image_line = cv2.line(image,(0,int(h/2)),(w,int(h/2)),(0,0,255),1)
+    # image = np.asarray(image)
+    # gray = cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
+    w,h = image.size[::-1]
+    image_line = cv2.line(np.asarray(image),(0,int(h/2)),(w,int(h/2)),(0,0,255),1)
     box_position = out_boxes.tolist()
     anchor ,wh, test_box_w, test_box_h= [], [], [], []
     for box in box_position:
-        [x1, y1], [x2, y2] = box[:2][::-1], box[2:][::-1]
+        y1,x1,y2,x2 = box_position
         cw1, ch1 = (x1 + x2) / 2, (y1 + y2) / 2
         anchor.append([cw1,ch1])
         wh.append([x2 - x1,y2 - y1])
         test_box_w.extend(cw1)
         test_box_h.extend(ch1)
 
-
-
     anc1,anc2 = anchor
     if anc2[0] - anc1[0] <  delta * wh[1][0] and  anc2[1] - anc2[1] < delta * wh[1][0] :
         pass
 
+def count(out_classes, out_scores, out_boxes,image,number):
+    w, h = image.size# image has rotated  90 degree
+
+    # cv2.rectangle()
+    # 输入参数分别为图像、左上角坐标、右下角坐标、颜色数组、粗细
+    #cv2.rectangle(img, (x, y), (x + w, y + h), (B, G, R), Thickness)
+    # cv2.putText()
+    # 输入参数为图像、文本、位置、字体、大小、颜色数组、粗细
+    #cv2.putText(img, text, (x, y), Font, Size, (B, G, R), Thickness)
+
+    image_cv = np.asarray(image)
+    for y1,x1,y2,x2 in out_boxes.tolist():
+        cv2.rectangle(image_cv,(int(x1),int(y1)),(max(int(x2)-30,30),int(y2)),(255,0,0),3)
+
+    distance = 300
+    image_line_up   = cv2.line(np.asarray(image), (0, int(h / 2) - distance), (w, int(h / 2) - distance), (0, 0, 255), 1)
+    image_line_down = cv2.line(image_line_up, (0, int(h / 2)), (w, int(h / 2)), (0, 0, 255), 1)
+
+    print('sdfasdf')
+    # return np.asarray(image_cv).astype(float)
+    return np.asarray(image_line_down)
