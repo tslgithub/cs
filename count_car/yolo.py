@@ -95,7 +95,7 @@ class YOLO(object):
                 score_threshold=self.score, iou_threshold=self.iou)
         return boxes, scores, classes
 
-    def detect_image(self, image,prev_boxes):
+    def detect_image(self, image,prev_boxes,clock):
         start = timer()
 
         if self.model_image_size != (None, None):
@@ -130,7 +130,7 @@ class YOLO(object):
         boxx=[]
         if (len(out_boxes)) != 0:
             # tools.region_nms(out_classes,out_boxes,out_scores,image)
-            out_classes, out_scores, out_boxes = tools.region_nms(out_classes,out_boxes,out_scores,image)
+            out_classes, out_scores, out_boxes = tools.region_nms(out_classes,out_boxes,out_scores,image,clock)
             prev_boxes.extend([out_boxes.tolist()])
             tools.track_target(out_classes, out_scores, out_boxes,image,last2boxes=prev_boxes[-2:])
         # boxx.append(out_boxes)
@@ -193,6 +193,7 @@ def detect_video(yolo, video_path, output_path):
 
     out = cv2.VideoWriter(output_path, fourcc, 30.0, (1920,1080))
 
+    clock = 0
     accum_time = 0
     curr_fps = 0
     fps = "FPS: ??"
@@ -202,8 +203,8 @@ def detect_video(yolo, video_path, output_path):
     while True:
         ret, frame = vid.read()
         image = (Image.fromarray(frame)).rotate(-90)
-
-        image = yolo.detect_image(image,prev_boxes)
+        clock += 1
+        image = yolo.detect_image(image,prev_boxes,clock)
         result = np.asarray(image)  #cv2.imshwo('result')
         curr_time = timer()
         exec_time = curr_time - prev_time
