@@ -8,7 +8,7 @@ import time
 import numpy as np
 import operator
 import PIL
-# from PIL import Image
+from PIL import Image,ImageDraw
 # from PIL import ImageDraw
 
 def sh(img):
@@ -35,15 +35,7 @@ def save_img(img):
 #     img_name = Time + Name
 #     img.save('./tmp/'+img_name+'.jpg', 'jpeg')
 #
-# def create_lines(x1,y1,x2,y2,image):
-#     '''绘制干扰线'''
-#
-#         # 起始点
-#     begin = (x1,y1)
-#     #结束点
-#     end = (x2,y2)
-#     ImageDraw.draw.line([begin, end], fill=(255, 0, 0))
-#     # fill = ()
+
 
 # def create_points():
 #     '''绘制干扰点'''
@@ -213,24 +205,27 @@ def track_target(out_classes, out_scores, out_boxes,image,last2boxes):
     if anc2[0] - anc1[0] <  delta * wh[1][0] and  anc2[1] - anc2[1] < delta * wh[1][0] :
         pass
 
-def count(out_classes, out_scores, out_boxes,image,number):
+def draw_line(image,distance):
+    w,h = image.size
+    image_line_up = cv2.line(np.asarray(image), (0, int(h / 2) - distance), (w, int(h / 2) - distance), (0, 0, 255), 3)
+    image_line_down = cv2.line(image_line_up, (0, int(h / 2)), (w, int(h / 2)), (0, 0, 255), 3)
+    image_pil = Image.fromarray(image_line_down)
+    line_up = int(h / 2) - distance
+    line_down = int(h / 2)
+    return image_pil,line_up,line_down
+
+def count(out_classes, out_scores, out_boxes,image,number,line_up,line_down):
     w, h = image.size# image has rotated  90 degree
 
-    # cv2.rectangle()
-    # 输入参数分别为图像、左上角坐标、右下角坐标、颜色数组、粗细
-    #cv2.rectangle(img, (x, y), (x + w, y + h), (B, G, R), Thickness)
-    # cv2.putText()
-    # 输入参数为图像、文本、位置、字体、大小、颜色数组、粗细
-    #cv2.putText(img, text, (x, y), Font, Size, (B, G, R), Thickness)
+    anchor_y = []
+    for y1,x1,y2,x2 in out_boxes.tolist:
+        anchor_y.append((y1+y2)/2)
+        # anchor_x ,anchor_y = (x1+x2)/2, (y1+y2)/2
 
-    image_cv = np.asarray(image)
-    for y1,x1,y2,x2 in out_boxes.tolist():
-        cv2.rectangle(image_cv,(int(x1),int(y1)),(max(int(x2)-30,30),int(y2)),(255,0,0),3)
+    for anchor in anchor_y:
+        if anchor > line_up and anchor < line_down:
+            number+=1
 
-    distance = 300
-    image_line_up   = cv2.line(np.asarray(image), (0, int(h / 2) - distance), (w, int(h / 2) - distance), (0, 0, 255), 1)
-    image_line_down = cv2.line(image_line_up, (0, int(h / 2)), (w, int(h / 2)), (0, 0, 255), 1)
 
-    print('sdfasdf')
-    # return np.asarray(image_cv).astype(float)
-    return np.asarray(image_line_down)
+    immage_pil = Image.fromarray(image_line_down)
+    return immage_pil
