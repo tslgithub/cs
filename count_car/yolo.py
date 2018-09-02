@@ -16,7 +16,6 @@ from PIL import Image, ImageFont, ImageDraw
 
 from yolo3.model import yolo_eval, yolo_body, tiny_yolo_body
 from yolo3.utils import letterbox_image
-import os
 
 import cv2
 import tools
@@ -25,8 +24,11 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 # from keras.utils import multi_gpu_model
 gpu_num=1
 
-class YOLO(object):
-    def __init__(self):
+# class YOLO(object):
+class YOLO():
+    # def __init__(self):
+    def __init__(self,n='__'):
+        self.n = "__"
         self.model_path = 'model_data/yolo.h5' # model path or trained weights path
         self.anchors_path = 'model_data/yolo_anchors.txt'
         self.classes_path = 'model_data/coco_classes.txt'
@@ -35,9 +37,58 @@ class YOLO(object):
         self.class_names = self._get_class()
         self.anchors = self._get_anchors()
         self.sess = K.get_session()
-        self.model_image_size = (416, 416) # fixed size or (None, None), hw
+        self.model_image_size = (320, 320) # fixed size or (None, None), hw
         self.boxes, self.scores, self.classes = self.generate()
+        self.Number = 0
+        self.Boxes = []
+        self.line_down = 1000
+        self.line_up = 950
+        self.flag = 0
         # self.boxes=[]
+        # self.car_number = 0
+
+        # def __init__(self, n="__"):
+        # _p 最后一次的Mat值， n 图片主名 f 处理方法名 l1 第一层 l2 第二层
+        # self._p, self.n, self.f, self.l1, self.l2, self.skip, self.increase = None, n, "_", 0, 0, False, 1
+
+    @property
+    def p1(self):
+        return self._p
+
+    @p1.setter
+    def p1(self, p):
+        self._p = p
+        self.l1 += 1
+        if self.l2 > 0:
+            self.f = ""
+        self.l2 = 0
+        self.write()
+
+    @p1.deleter
+    def p1(self):
+        del self._p
+
+    @property
+    def p2(self):
+        return self._p
+
+    @p2.setter
+    def p2(self, p):
+        self._p = p
+        self.l2 += 1
+        self.write()
+
+    @p2.deleter
+    def p2(self):
+        del self._p
+
+    def write(self):
+        if self.skip:
+            pass
+        else:
+            # cv2.imwrite("output/tmp/%s.z.%s.%s.%s.png" % (self.n, str(self.l1).zfill(2), str(self.l2).zfill(2), self.f), self._p)
+            cv2.imwrite("tmp/%s.z.%s.%s.%s.png" % (self.n, str(self.l1).zfill(2), str(self.l2).zfill(2), self.f),
+                        self._p)
 
     def _get_class(self):
         classes_path = os.path.expanduser(self.classes_path)
@@ -94,13 +145,13 @@ class YOLO(object):
                 len(self.class_names), self.input_image_shape,
                 score_threshold=self.score, iou_threshold=self.iou)
         return boxes, scores, classes
-
-    def detect_image(self, image,prev_boxes,clock,number):
+    #                     (image,prev_boxes,clock,car_number,Number,anchor_y)
+    def detect_image(self, image,clock):
         start = timer()
 
         if self.model_image_size != (None, None):
-            assert self.model_image_size[0]%32 == 0, 'Multiples of 32 required'
-            assert self.model_image_size[1]%32 == 0, 'Multiples of 32 required'
+            assert self.model_image_size[0] % 32 == 0, 'Multiples of 32 required'
+            assert self.model_image_size[1] % 32 == 0, 'Multiples of 32 required'
             boxed_image = letterbox_image(image, tuple(reversed(self.model_image_size)))
         else:
             new_image_size = (image.width - (image.width % 32),
@@ -127,15 +178,14 @@ class YOLO(object):
         # font = ImageFont.truetype(,size=np.floor(3e-2 * image.size[1] + 0.5).astype('int32'))
 
         thickness = (image.size[0] + image.size[1]) // 300
-        boxx=[]
+        # boxx=[]
 
-        image,line_up,line_down = tools.draw_line(image,distance=300)
+        # image,line_up,line_down = tools.draw_line(image,distance=300)
+
         if (len(out_boxes)) != 0:
-            # tools.region_nms(out_classes,out_boxes,out_scores,image)
             out_classes, out_scores, out_boxes = tools.region_nms(out_classes,out_boxes,out_scores,image,clock)
-            # prev_boxes.extend([out_boxes.tolist()])
             # tools.track_target(out_classes, out_scores, out_boxes,image,last2boxes=prev_boxes[-2:])
-            tools.count(out_classes, out_scores, out_boxes, image, number,line_up,line_down)
+            get_num = tools.count(self,out_classes, out_scores, out_boxes, image)
 
         for i, c in reversed(list(enumerate(out_classes))):
             predicted_class = self.class_names[c]
@@ -174,98 +224,72 @@ class YOLO(object):
 
         end = timer()
         print(end - start)
-        return image
+        return image, self.Number
+
+
+    def detect_video(self,video_path):
+        name = video_path.split('video/')[1].split('.mp4')[0]
+        output_path = '/home/tsl/keras-yolo3/data/result/'+name+'.mp4'
+
+        vid = cv2.VideoCapture(video_path)
+        if not vid.isOpened():
+            raise IOError("Couldn't open webcam or video")
+        video_FourCC    = int(vid.get(cv2.CAP_PROP_FOURCC))
+        video_fps       = vid.get(cv2.CAP_PROP_FPS)
+        video_size      = (int(vid.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                            int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+        isOutput = True if output_path != "" else False
+
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+
+        out = cv2.VideoWriter(output_path, fourcc, 30.0, (1920,1080))
+        accum_time, clock, curr_fps = 0,0,0
+        fps = "FPS: ??"
+        prev_time = timer()
+
+        while True:
+            ret, frame = vid.read()
+            image = (Image.fromarray(frame)).rotate(-90)
+            clock += 1
+            image ,Number= YOLO.detect_image(self,image,clock)
+            result = np.asarray(image)  #cv2.imshwo('result')
+            _,w,h = result.shape[::-1]
+            curr_time = timer()
+            exec_time = curr_time - prev_time
+            prev_time = curr_time
+            accum_time = accum_time + exec_time
+            curr_fps = curr_fps + 1
+            if accum_time % 5 == 0:
+                accum_time = accum_time - 1
+                fps = "FPS: " + str(curr_fps)
+                curr_fps = 0
+            #cv2.putText(I,'there 0 error(s):',(50,150),cv2.FONT_HERSHEY_COMPLEX,6,(0,0,255),25)
+            #照片/添加的文字/左上角坐标/字体/字体大小/颜色/字体粗细
+            cv2.putText(result, text=fps, org=(3, 15), fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                        fontScale=0.50, color=(0,0,255), thickness=2)
+            cv2.putText(result,text=str(Number),org=(int(w/2),int(h/2)),fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                        fontScale=10,color=(255,0,0),thickness=6)
+
+            cv2.namedWindow("result", cv2.WINDOW_NORMAL)
+            cv2.imshow("result", result)
+
+            if ret:
+                out.write(result)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+        if isOutput:
+            out.write(result)
 
     def close_session(self):
         self.sess.close()
 
 
-def detect_video(yolo, video_path, output_path):
-    # tools.sh(video_path)
-    vid = cv2.VideoCapture(video_path)
-    if not vid.isOpened():
-        raise IOError("Couldn't open webcam or video")
-    video_FourCC    = int(vid.get(cv2.CAP_PROP_FOURCC))
-    video_fps       = vid.get(cv2.CAP_PROP_FPS)
-    video_size      = (int(vid.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                        int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-    isOutput = True if output_path != "" else False
-
-
-    fourcc = cv2.VideoWriter_fourcc(*'XVID')
-
-    out = cv2.VideoWriter(output_path, fourcc, 30.0, (1920,1080))
-
-    number = 0
-    clock = 0
-    accum_time = 0
-    curr_fps = 0
-    fps = "FPS: ??"
-    prev_time = timer()
-
-    prev_boxes = []
-    while True:
-        ret, frame = vid.read()
-        image = (Image.fromarray(frame)).rotate(-90)
-        clock += 1
-        image = yolo.detect_image(image,prev_boxes,clock,number)
-        result = np.asarray(image)  #cv2.imshwo('result')
-        curr_time = timer()
-        exec_time = curr_time - prev_time
-        prev_time = curr_time
-        accum_time = accum_time + exec_time
-        curr_fps = curr_fps + 1
-        if accum_time > 1:
-            accum_time = accum_time - 1
-            fps = "FPS: " + str(curr_fps)
-            curr_fps = 0
-        cv2.putText(result, text=fps, org=(3, 15), fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-                    fontScale=0.50, color=(255,0 , 0), thickness=2)
-        cv2.namedWindow("result", cv2.WINDOW_NORMAL)
-        cv2.imshow("result", result)
-
-        if ret:
-            out.write(result)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-        # if isOutput:
-        #     out.write(result)
-
-
+def main():
+    video_path='./data/video/14.mp4'
+    yolo = YOLO()
+    yolo.detect_video(video_path)
     yolo.close_session()
 
-
-# def detect_img(yolo):
-#     import cv2
-#     path = os.getcwd()
-#     while True:
-#         img = 'dog.jpg'
-#         image = Image.open(img)
-#
-#         r_image = yolo.detect_image(image)
-#         # if('1'==input('input keyword 1 to show img')):
-#         r_image.show()
-#         cv2.waitKey()
-#         cv2.waitKey()
-#         cv2.waitKey()
-#         #img = input('Input image filename:')
-#         # try:
-#         #     image = Image.open(img)
-#         # except:
-#         #     print('Open Error! Try again!')
-#         #     continue
-#         # #if img is  None:
-# 		# #	continue
-#         # else:
-#         #     r_image = yolo.detect_image(image)
-#         #     r_image.show()
-#             # cv2.waitKey()
-#             # cv2.imshow(r_image)
-#             # cv2.waitKey()
-#     yolo.close_session()
-#
-#
-#
-# if __name__ == '__main__':
-#     detect_img(YOLO())
+if __name__ == '__main__':
+    main()

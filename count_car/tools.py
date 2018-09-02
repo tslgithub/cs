@@ -62,11 +62,7 @@ def region_nms(out_classes,out_boxes,out_scores,image,clock):
 
     for i ,location_i in (list(enumerate(list(out_boxes)))[:-1]):
 
-        # if int(out_boxes.tolist()[0][0]) != 883:
-        #     continue
 
-        # xi, yi, xii, yii = location_i[0], location_i[1], location_i[2],location_i[3]
-        # location_i.reverse()
         yi, xi, yii, xii = location_i
         # central_i_x ,central_i_y= (xi + xii)/2 , (yi+yii)/2
         delta_x , delta_y = delta * (xii - xi), delta * (yii - yi)
@@ -80,6 +76,8 @@ def region_nms(out_classes,out_boxes,out_scores,image,clock):
 
             if (abs(xi - xj) < delta_x and abs(yi - yj) < delta_y) \
                     or (abs(xii - xjj)< delta_x and abs(yii - yjj)<delta_y):
+
+                # else:
                 same_target_indexs.append([i, j])
                 rm_index = i if out_scores[i] < out_scores[j] else j
 
@@ -206,6 +204,7 @@ def track_target(out_classes, out_scores, out_boxes,image,last2boxes):
         pass
 
 def draw_line(image,distance):
+    distance = 0
     w,h = image.size
     image_line_up = cv2.line(np.asarray(image), (0, int(h / 2) - distance), (w, int(h / 2) - distance), (0, 0, 255), 3)
     image_line_down = cv2.line(image_line_up, (0, int(h / 2)), (w, int(h / 2)), (0, 0, 255), 3)
@@ -214,18 +213,41 @@ def draw_line(image,distance):
     line_down = int(h / 2)
     return image_pil,line_up,line_down
 
-def count(out_classes, out_scores, out_boxes,image,number,line_up,line_down):
+def count(self,out_classes, out_scores, out_boxes,image):
     w, h = image.size# image has rotated  90 degree
+    # anchor = []
+    Boxes = []
+    delta = 0.05
+    for box in out_boxes.tolist():
+        y1, x1, y2, x2 = box
+        if ((x1 < 500 and y1 <200 ) and (x2 > 1000 and y2>900)) :
+            continue
+        Boxes.append(box)
 
-    anchor_y = []
-    for y1,x1,y2,x2 in out_boxes.tolist:
-        anchor_y.append((y1+y2)/2)
-        # anchor_x ,anchor_y = (x1+x2)/2, (y1+y2)/2
+    if len(Boxes) == 0:
+        return self.Number
+    if len(self.Boxes) == 0:
+        self.Number += len(Boxes)
+        self.Boxes.append(Boxes)
+        return self.Number
 
-    for anchor in anchor_y:
-        if anchor > line_up and anchor < line_down:
-            number+=1
+    for crt_box in Boxes:
+        y11, x11,y12,x12 = crt_box
+        for pre_box in self.Boxes[-1]:
+            y21, x21, y22, x22 = pre_box
+            overlap_y1,overlap_x1,overlap_y2,overlap_x2 = y21,x11,y12,x22
+            ow ,oh= abs(x22 - x11), y12 - y21
+
+            # if oh <y12-y21 and ow< x22 -x21:
+            if oh < 0:
+                continue
+            if (ow * oh) < min( ((y12 - y11)*(x12 - x11)),(( y22 - y21)*(x22 - x21)) ) * delta:
+                self.Number += 1
+
+    self.Boxes.append(Boxes)
+    return self.Number
 
 
-    immage_pil = Image.fromarray(image_line_down)
-    return immage_pil
+
+
+

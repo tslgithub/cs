@@ -14,4 +14,3 @@ for item in a:
         if k == len(a)-1:
             break
 print (a)
-pritn('Done')
