@@ -167,11 +167,15 @@ def region_nms(out_classes,out_boxes,out_scores,image,clock):
     #         if out_boxes[i] in  out_boxes:
     #             out_boxes_list[1:].index(out_boxes_list[i])
     # print(out_boxes,'************************************************************')
+    for bb in new_out_boxes:
+        anchor = ( int((bb[1]+bb[3])/2),int((bb[0]+bb[2])/2))
+        image = cv2.circle(np.asarray(image), anchor, 10, (0, 0, 255), -1)
+
     print('class------------------ ',new_out_classes)
     print('out_scores------------- ',new_out_scores)
     print('out_boxes-------------- ',new_out_boxes)
     print('clock ------------------',clock)
-    return np.array(new_out_classes),np.array(new_out_scores),np.array(new_out_boxes)
+    return np.array(new_out_classes),np.array(new_out_scores),np.array(new_out_boxes),Image.fromarray(image)
     # return np.array(out_classes),np.array(out_scores),np.array(out_boxes)
 
 def track_target(out_classes, out_scores, out_boxes,image,last2boxes):
@@ -206,22 +210,28 @@ def track_target(out_classes, out_scores, out_boxes,image,last2boxes):
 def draw_line(image,distance):
     distance = 0
     w,h = image.size
+    # h = 1.8*h
     image_line_up = cv2.line(np.asarray(image), (0, int(h / 2) - distance), (w, int(h / 2) - distance), (0, 0, 255), 3)
-    image_line_down = cv2.line(image_line_up, (0, int(h / 2)), (w, int(h / 2)), (0, 0, 255), 3)
+    image_line_down = cv2.line(image_line_up, (0, int(h / 2)), (w, int(h / 2)), (255, 0, 0), 3)
     image_pil = Image.fromarray(image_line_down)
     line_up = int(h / 2) - distance
     line_down = int(h / 2)
     return image_pil,line_up,line_down
 
-def count(self,out_classes, out_scores, out_boxes,image):
+
+###   https://github.com/alex-drake/OpenCV-Traffic-Counter
+def count(self,out_classes, out_scores, out_boxes,image,distance):
     w, h = image.size# image has rotated  90 degree
     # anchor = []
     Boxes = []
-    delta = 0.05
-    for box in out_boxes.tolist():
+    delta = 0.5
+    pix = 200
+    for box in out_boxes.astype(int).tolist():
         y1, x1, y2, x2 = box
-        if ((x1 < 500 and y1 <200 ) and (x2 > 1000 and y2>900)) :
+        # if ((x1 < 500 and y1 <200 ) and (x2 > 1000 and y2>900)) :
+        if (x2 - x1)*(y2-y1) > 0.5*w*h:
             continue
+        # if y2 - y1 < h/2 and y2 - y1 > h/2 - 200:
         Boxes.append(box)
 
     if len(Boxes) == 0:
@@ -231,23 +241,135 @@ def count(self,out_classes, out_scores, out_boxes,image):
         self.Boxes.append(Boxes)
         return self.Number
 
+
+    target_number = len(Boxes)
+    # for crt_box in Boxes:
+    #     y11, x11,y12,x12 = crt_box
+    #     for pre_box in self.Boxes[-1]:
+    #         y21, x21, y22, x22 = pre_box
+    #         if y21< (y11+y12)/2 <y22 and x21<(x11+x12)/2<x22:
+    #             target_number-=1
+    # h=1.6*h
+    # target_number = len(Boxes)
     for crt_box in Boxes:
-        y11, x11,y12,x12 = crt_box
+        y11, x11, y12, x12 = crt_box
         for pre_box in self.Boxes[-1]:
             y21, x21, y22, x22 = pre_box
-            overlap_y1,overlap_x1,overlap_y2,overlap_x2 = y21,x11,y12,x22
-            ow ,oh= abs(x22 - x11), y12 - y21
+    #         if  h/2 <(y11+y12)/2 < h/2+distance:
+    #             self.Number+=1
 
-            # if oh <y12-y21 and ow< x22 -x21:
-            if oh < 0:
-                continue
-            if (ow * oh) < min( ((y12 - y11)*(x12 - x11)),(( y22 - y21)*(x22 - x21)) ) * delta:
-                self.Number += 1
+            # (0, int(h / 2) - 100), (w, int(h / 2) - distance)
+    # self.Number+=target_number
+        if not (((y21 < y11 and y11<y22) and (x12 - x21 < delta*w) ) or ((y21 < y11 and y11<y22) and (x12 - x22 < delta*w) )):
+
+            if (y22>y12 > y21 and (x11 > x21 or x11<x22)) or (y22>y12>y21 and (x12 > x21 or x12<x22)):
+                target_number -= 1
+    self.Number += 1
+
+
+            # if (y12 - y21 < delta*pix and (x11 - x21 < delta*pix or  x22 - x11 < delta*pix)) or \
+            #         (y12 - y21 < delta*pix and (x12 - x21 < delta*pix or  x22 - x12 < delta*pix)):
+            #     target_number -= 1
+            #     self.Number+=1
+                # cv2.putText(np.asarray(image), text=str(self.Number), org=(int(w / 2), int(h / 2)), fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                #             fontScale=10, color=(255, 0, 0), thickness=6)
+    # if target_number>0:
+        # self.Number += target_number
+
+
+        # overlap_y1,overlap_x1,overlap_y2,overlap_x2 = y21,x11,y12,x22
+
+        # img1 = (np.asarray(image))[slice(y11,y12),slice(x11,x12)]
+        # img2 = (np.asarray(image))[slice(y21,y22),slice(x21,x22)]
+        # print( 'feature ==== ', feature(img1,img2) )
+
+        # ow ,oh = x22 - x11, y12 - y21
+
+        # if oh <y12-y21 and ow< x22 -x21:
+        # if oh < 0:
+        #     ow ,oh = 0, 0
+        #     # self.Number += 1
+        # if (ow * oh) < min( abs((y12 - y11) * (x12 - x11)),abs(( y22 - y21)*(x22 - x21)) ) * 0.5:
+        #     self.Number += 1
+    # self.image = image
 
     self.Boxes.append(Boxes)
     return self.Number
 
+def count2(self,out_classes, out_scores, out_boxes,image):
+    pass
 
+
+# 均值哈希算法
+def aHash(img):
+    # 缩放为8*8
+    img = cv2.resize(img, (192, 1088), interpolation=cv2.INTER_CUBIC)
+    # 转换为灰度图
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # s为像素和初值为0，hash_str为hash值初值为''
+    s = 0
+    hash_str = ''
+    # 遍历累加求像素和
+    for i in range(192):
+        for j in range(108):
+            s = s + gray[i, j]
+    # 求平均灰度
+    avg = s / 64
+    # 灰度大于平均值为1相反为0生成图片的hash值
+    for i in range(8):
+        for j in range(8):
+            if gray[i, j] > avg:
+                hash_str = hash_str + '1'
+            else:
+                hash_str = hash_str + '0'
+    return hash_str
+
+# 差值感知算法
+def dHash(img):
+    # 缩放8*8
+    img = cv2.resize(img, (192, 108), interpolation=cv2.INTER_CUBIC)
+    # 转换灰度图
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    hash_str = ''
+    # 每行前一个像素大于后一个像素为1，相反为0，生成哈希
+    for i in range(108):
+        for j in range(192):
+            if gray[i, j] > gray[i, j + 1]:
+                hash_str = hash_str + '1'
+            else:
+                hash_str = hash_str + '0'
+    return hash_str
+
+# Hash值对比
+def cmpHash(hash1, hash2):
+    n = 0
+    # hash长度不同则返回-1代表传参出错
+    if len(hash1) != len(hash2):
+        return -1
+    # 遍历判断
+    for i in range(len(hash1)):
+        # 不相等则n计数+1，n最终为相似度
+        if hash1[i] != hash2[i]:
+            n = n + 1
+    return n
+
+def feature(img1,img2):
+    # img1 = cv2.imread('walk_m.jpg')
+    # img2 = cv2.imread('walks1.jpg')
+    hash1 = aHash(img1)
+    hash2 = aHash(img2)
+    print(hash1)
+    print(hash2)
+    n_hash = cmpHash(hash1, hash2)
+    # print('均值哈希算法相似度：', n)
+
+    hash1 = dHash(img1)
+    hash2 = dHash(img2)
+    print(hash1)
+    print(hash2)
+    d_hash= cmpHash(hash1, hash2)
+    # print('差值哈希算法相似度：', n)
+    return  n_hash,d_hash
 
 
 
