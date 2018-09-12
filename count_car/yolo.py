@@ -20,9 +20,215 @@ from yolo3.utils import letterbox_image
 import cv2
 import tools
 
+import count_vehicle_number
+
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 # from keras.utils import multi_gpu_model
 gpu_num=1
+
+import math
+import logging
+
+tracked_blobs = []
+tracked_conts = []
+t_retval = []
+frame_no = 0
+
+class Vehicle(object):
+    def __init__(self, id, position):
+        self.id = id
+        self.positions = [position]
+        self.frames_since_seen = 0
+        self.frames_seen = 0
+        self.counted = False
+        self.vehicle_dir = 0
+
+    @property
+    def last_position(self):
+        return self.positions[-1]
+    @property
+    def last_position2(self):
+        return self.positions[-2]
+
+    def add_position(self, new_position):
+        self.positions.append(new_position)
+        self.frames_since_seen = 0
+        self.frames_seen += 1
+
+    def draw(self, output_image):
+        for point in self.positions:
+            cv2.circle(output_image, point, 2, (0, 0, 255), -1)
+            cv2.polylines(output_image, [np.int32(self.positions)]
+                , False, (0, 0, 255), 1)
+# ============================================================================
+
+class VehicleCounter(object):
+    def __init__(self, shape, divider):
+        self.log = logging.getLogger("vehicle_counter")
+
+        self.height, self.width = shape
+        self.divider = divider
+
+        self.vehicles = []
+        self.next_vehicle_id = 0
+        self.vehicle_count = 0
+        self.vehicle_LHS = 0
+        self.vehicle_RHS = 0
+        self.max_unseen_frames = 10
+
+    @staticmethod
+    def get_vector(a, b):
+        """Calculate vector (distance, angle in degrees) from point a to point b.
+
+        Angle ranges from -180 to 180 degrees.
+        Vector with angle 0 points straight down on the image.
+        Values decrease in clockwise direction.
+        """
+        dx = float(b[0] - a[0])
+        dy = float(b[1] - a[1])
+
+        distance = math.sqrt(dx ** 2 + dy ** 2)
+
+        if dy > 0:
+            angle = math.degrees(math.atan(-dx / dy))
+        elif dy == 0:
+            if dx < 0:
+                angle = 90.0
+            elif dx > 0:
+                angle = -90.0
+            else:
+                angle = 0.0
+        else:
+            if dx < 0:
+                angle = 180 - math.degrees(math.atan(dx / dy))
+            elif dx > 0:
+                angle = -180 - math.degrees(math.atan(dx / dy))
+            else:
+                angle = 180.0
+
+        return distance, angle, dx, dy
+
+    @staticmethod
+    def is_valid_vector(a, b):
+        # vector is only valid if threshold distance is less than 12
+        # and if vector deviation is less than 30 or greater than 330 degs
+        distance, angle, _, _ = a
+        threshold_distance = 12.0
+        return (distance <= threshold_distance)
+
+    def update_vehicle(self, vehicle, matches):
+        # Find if any of the matches fits this vehicle
+        for i, match in enumerate(matches):
+            contour, centroid = match
+
+            # store the vehicle data
+            vector = self.get_vector(vehicle.last_position, centroid)
+
+            # only measure angle deviation if we have enough points
+            if vehicle.frames_seen > 2:
+                prevVector = self.get_vector(vehicle.last_position2, vehicle.last_position)
+                angleDev = abs(prevVector[1] - vector[1])
+            else:
+                angleDev = 0
+
+            b = dict(
+                id=vehicle.id,
+                center_x=centroid[0],
+                center_y=centroid[1],
+                vector_x=vector[0],
+                vector_y=vector[1],
+                dx=vector[2],
+                dy=vector[3],
+                counted=vehicle.counted,
+                frame_number=frame_no,
+                angle_dev=angleDev
+            )
+            # print('frame_no ===== ', b['frame_number'])
+            tracked_blobs.append(b)
+
+            # check validity
+            if self.is_valid_vector(vector, angleDev):
+                vehicle.add_position(centroid)
+                vehicle.frames_seen += 1
+                # check vehicle direction
+                if vector[3] > 0:
+                    # positive value means vehicle is moving DOWN
+                    vehicle.vehicle_dir = 1
+                elif vector[3] < 0:
+                    # negative value means vehicle is moving UP
+                    vehicle.vehicle_dir = -1
+                self.log.debug("Added match (%d, %d) to vehicle #%d. vector=(%0.2f,%0.2f)"
+                               , centroid[0], centroid[1], vehicle.id, vector[0], vector[1])
+                return i
+
+        # No matches fit...
+        vehicle.frames_since_seen += 1
+        self.log.debug("No match for vehicle #%d. frames_since_seen=%d"
+                       , vehicle.id, vehicle.frames_since_seen)
+
+        return None
+
+    def update_count(self, matches, output_image=None):
+        self.log.debug("Updating count using %d matches...", len(matches))
+
+        # First update all the existing vehicles
+        for vehicle in self.vehicles:
+            i = self.update_vehicle(vehicle, matches)
+            if i is not None:
+                del matches[i]
+
+        # Add new vehicles based on the remaining matches
+        for match in matches:
+            contour, centroid = match
+            new_vehicle = Vehicle(self.next_vehicle_id, centroid)
+            self.next_vehicle_id += 1
+            self.vehicles.append(new_vehicle)
+            self.log.debug("Created new vehicle #%d from match (%d, %d)."
+                           , new_vehicle.id, centroid[0], centroid[1])
+
+        # Count any uncounted vehicles that are past the divider
+        for vehicle in self.vehicles:
+            if not vehicle.counted and (((vehicle.last_position[1] > self.divider) and (vehicle.vehicle_dir == 1)) or
+                                        ((vehicle.last_position[1] < self.divider) and (
+                                                vehicle.vehicle_dir == -1))) and (vehicle.frames_seen > 6):
+
+                vehicle.counted = True
+                frame_w = 1920
+                frame_h = 1080
+                # update appropriate counter
+                if ((vehicle.last_position[1] > self.divider) and (vehicle.vehicle_dir == 1) and (
+                        vehicle.last_position[0] >= (int(frame_w / 2) - 10))):
+                    self.vehicle_RHS += 1
+                    self.vehicle_count += 1
+                elif ((vehicle.last_position[1] < self.divider) and (vehicle.vehicle_dir == -1) and (
+                        vehicle.last_position[0] <= (int(frame_w / 2) + 10))):
+                    self.vehicle_LHS += 1
+                    self.vehicle_count += 1
+
+                self.log.debug("Counted vehicle #%d (total count=%d)."
+                               , vehicle.id, self.vehicle_count)
+
+        # Optionally draw the vehicles on an image
+        if output_image is not None:
+            for vehicle in self.vehicles:
+                vehicle.draw(output_image)
+
+            # LHS
+            cv2.putText(output_image, ("LH Lane: %02d" % self.vehicle_LHS), (12, 56)
+                        , cv2.FONT_HERSHEY_PLAIN, 1.2, (127, 255, 255), 2)
+            # RHS
+            cv2.putText(output_image, ("RH Lane: %02d" % self.vehicle_RHS), (216, 56)
+                        , cv2.FONT_HERSHEY_PLAIN, 1.2, (127, 255, 255), 2)
+
+        # Remove vehicles that have not been seen long enough
+        removed = [v.id for v in self.vehicles
+                   if v.frames_since_seen >= self.max_unseen_frames]
+        self.vehicles[:] = [v for v in self.vehicles
+                            if not v.frames_since_seen >= self.max_unseen_frames]
+        for id in removed:
+            self.log.debug("Removed vehicle #%d.", id)
+
+        self.log.debug("Count updated, tracking %d vehicles.", len(self.vehicles))
 
 # class YOLO(object):
 class YOLO():
@@ -44,6 +250,8 @@ class YOLO():
         self.line_down = 1000
         self.line_up = 950
         self.flag = 0
+        self.image=np.asarray([])
+
         # self.boxes=[]
         # self.car_number = 0
 
@@ -146,6 +354,7 @@ class YOLO():
                 score_threshold=self.score, iou_threshold=self.iou)
         return boxes, scores, classes
     #                     (image,prev_boxes,clock,car_number,Number,anchor_y)
+
     def detect_image(self, image,clock):
         start = timer()
 
@@ -179,13 +388,17 @@ class YOLO():
 
         thickness = (image.size[0] + image.size[1]) // 300
         # boxx=[]
+        distance = 100
+        image,line_up,line_down = tools.draw_line(image,distance=distance)
 
-        # image,line_up,line_down = tools.draw_line(image,distance=300)
-
+        # print(self.anchors,'--------'*20)
         if (len(out_boxes)) != 0:
-            out_classes, out_scores, out_boxes = tools.region_nms(out_classes,out_boxes,out_scores,image,clock)
+            out_classes, out_scores, out_boxes,_ = tools.region_nms(out_classes,out_boxes,out_scores,image,clock)
+
             # tools.track_target(out_classes, out_scores, out_boxes,image,last2boxes=prev_boxes[-2:])
-            get_num = tools.count(self,out_classes, out_scores, out_boxes, image)
+            # get_num = tools.count(self,out_classes, out_scores, out_boxes, image,distance=distance)
+
+            # count_vehicle_number.test_main(out_boxes,image,frame_w = 1920,frame_h=1080)
 
         for i, c in reversed(list(enumerate(out_classes))):
             predicted_class = self.class_names[c]
@@ -224,12 +437,13 @@ class YOLO():
 
         end = timer()
         print(end - start)
-        return image, self.Number
+        return image, self.Number,out_boxes
 
 
     def detect_video(self,video_path):
-        name = video_path.split('video/')[1].split('.mp4')[0]
-        output_path = '/home/tsl/keras-yolo3/data/result/'+name+'.mp4'
+        # name = video_path.split('video/')[1].split('.mp4')[0]
+        # output_path = '/home/tsl/keras-yolo3/data/result/'+name+'.mp4'
+        output_path = '/home/tsl/keras-yolo3/data/result/'+'tmp.mp4'
 
         vid = cv2.VideoCapture(video_path)
         if not vid.isOpened():
@@ -245,48 +459,94 @@ class YOLO():
         out = cv2.VideoWriter(output_path, fourcc, 30.0, (1920,1080))
         accum_time, clock, curr_fps = 0,0,0
         fps = "FPS: ??"
+
         prev_time = timer()
+        total_frames = vid.get(cv2.CAP_PROP_FRAME_COUNT)
+        total_cars = 0
 
-        while True:
+        car_counter = None
+        blobs = []
+        ret, frame = vid.read()
+        frame_no = 0
+        ret, frame = vid.read()
+        while ret:
+            frame_no = frame_no + 1
             ret, frame = vid.read()
-            image = (Image.fromarray(frame)).rotate(-90)
-            clock += 1
-            image ,Number= YOLO.detect_image(self,image,clock)
-            result = np.asarray(image)  #cv2.imshwo('result')
-            _,w,h = result.shape[::-1]
-            curr_time = timer()
-            exec_time = curr_time - prev_time
-            prev_time = curr_time
-            accum_time = accum_time + exec_time
-            curr_fps = curr_fps + 1
-            if accum_time % 5 == 0:
-                accum_time = accum_time - 1
-                fps = "FPS: " + str(curr_fps)
-                curr_fps = 0
-            #cv2.putText(I,'there 0 error(s):',(50,150),cv2.FONT_HERSHEY_COMPLEX,6,(0,0,255),25)
-            #照片/添加的文字/左上角坐标/字体/字体大小/颜色/字体粗细
-            cv2.putText(result, text=fps, org=(3, 15), fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-                        fontScale=0.50, color=(0,0,255), thickness=2)
-            cv2.putText(result,text=str(Number),org=(int(w/2),int(h/2)),fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-                        fontScale=10,color=(255,0,0),thickness=6)
 
-            cv2.namedWindow("result", cv2.WINDOW_NORMAL)
-            cv2.imshow("result", result)
+            if ret and frame_no < total_frames:
 
-            if ret:
+                image = (Image.fromarray(frame)).rotate(-180)#.rotate(90).rotate(90)
+                clock += 1
+
+                image ,Number, boxes= YOLO.detect_image(self,image,clock)
+                boxes=boxes.astype(int)
+                for box in boxes:
+                    x,y,w,h = box[1],box[0],box[3]-box[1],box[2]-box[0]
+                    center = (int((box[1]+box[3])/2),int((box[0]+box[2])/2))
+                    blobs.append(((x,y,w,h),center))
+
+                for (i,match) in enumerate(blobs):
+                    contour,centroid = match
+                    c = dict(
+                        frame_no = frame_no,
+                        center_x = x,
+                        center_y = y,
+                        width = w,
+                        height = h
+                    )
+
+                    tracked_conts.append(c)
+                        # cv2.rectangle(frame, (x, y), (x + w - 1, y + h - 1), (0, 0, 255), LINE_THICKNESS)
+                    cv2.circle(frame, centroid, 2, (0, 0, 255), -1)
+                if car_counter is None:
+                    print("Creating vehicle counter...")
+                    car_counter = VehicleCounter(frame.shape[:2], 2 * frame.shape[0] / 3)
+
+                car_counter.update_count(blobs, frame)
+                current_count = car_counter.vehicle_RHS + car_counter.vehicle_LHS
+                total_cars = current_count
+                print('****'*20,total_cars)
+
+                self.Number = total_cars
+                result = np.asarray(image)  #cv2.imshwo('result')
+                _,w,h = result.shape[::-1]
+                curr_time = timer()
+                exec_time = curr_time - prev_time
+                prev_time = curr_time
+                accum_time = accum_time + exec_time
+                curr_fps = curr_fps + 1
+
+
+                if accum_time % 1 == 0:
+                    accum_time = accum_time - 1
+                    fps = "FPS: " + str(curr_fps)
+                    curr_fps = 0
+                #cv2.putText(I,'there 0 error(s):',(50,150),cv2.FONT_HERSHEY_COMPLEX,6,(0,0,255),25)
+                #照片/添加的文字/左上角坐标/字体/字体大小/颜色/字体粗细
+                cv2.putText(result, text=fps, org=(3, 15), fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                            fontScale=0.50, color=(0,0,255), thickness=2)
+                cv2.putText(result,text=str(Number),org=(int(w/2),int(h/2)),fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                            fontScale=10,color=(255,0,0),thickness=6)
+
+                cv2.namedWindow("result", cv2.WINDOW_NORMAL)
+                cv2.imshow("result", result)
+
+                if ret:
+                    out.write(result)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+
+            if isOutput:
                 out.write(result)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-
-        if isOutput:
-            out.write(result)
 
     def close_session(self):
         self.sess.close()
 
-
 def main():
-    video_path='./data/video/14.mp4'
+    # frame_no = 0
+    # video_path='./data/video/1.mp4'
+    video_path='/home/tsl/dataset/20180911/V80911-124224.mp4'
+    # video_path='./9999.mp4'
     yolo = YOLO()
     yolo.detect_video(video_path)
     yolo.close_session()
